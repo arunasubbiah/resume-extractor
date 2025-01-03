@@ -1,22 +1,11 @@
-import streamlit as st
-from openai import OpenAI
-from PyPDF2 import PdfReader
-from pydantic import BaseModel, EmailStr, ValidationError
-from typing import List
 import os
 import json
-
-#import load_dotenv to import environtment variables
-from dotenv import load_dotenv
-
-# Load environment variables from the .env file
-load_dotenv()
+from openai import OpenAI
+from pydantic import BaseModel
+from typing import List
 
 # Access the API key
 client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
-
-# Streamlit app title
-st.title("Resume Information Extractor with OpenAI")
 
 class ProjectInfo(BaseModel):
     CompanyName: str
@@ -27,13 +16,12 @@ class ProjectInfo(BaseModel):
 class ResumeInfo(BaseModel):
     Name: str
     Phone: str
-    Email: EmailStr
+    Email: str
     YrsOfExp: int
     Skills: List[str]
     Education: List[str]
     ProjectExperience: List[ProjectInfo]
     
-
 # Function to call OpenAI API for resume information extraction
 def extract_resume_info_with_openai(text):
     system_prompt = """
@@ -53,6 +41,7 @@ def extract_resume_info_with_openai(text):
 
     # Call the OpenAI API
     try:
+        # Use the OpenAI API to get a completion for the resume information extraction task
         response = client.beta.chat.completions.parse(
             model="gpt-4o-mini",
             messages=[
@@ -62,33 +51,31 @@ def extract_resume_info_with_openai(text):
             response_format=ResumeInfo,
             temperature=0
         )
-        return response.choices[0].message.content
+        # Parse the response and extract the message content
+        extracted_data = response.choices[0].message.content
+
+        # Return the result
+        return json.loads(extracted_data)  # Assuming the response is a valid JSON string
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        # Handle any error and return the error message
+        return {"error": str(e)}
 
-# Upload PDF file
-uploaded_file = st.file_uploader("Upload a resume (PDF format)", type="pdf")
+def lambda_handler(event, context):
+    # Check if the event has the 'text' key for resume content
+    if 'text' not in event:
+        return {
+            'statusCode': 400,
+            'body': json.dumps('Error: Missing "text" field in request body')
+        }
 
-if uploaded_file:
-    # Extract text from the uploaded PDF
-    pdf_reader = PdfReader(uploaded_file)
-    pdf_text = ""
-    for page in pdf_reader.pages:
-        pdf_text += page.extract_text()
-    #print(pdf_text)
-    # Extract structured information from the resume using OpenAI
-    if st.button("Extract Information"):
-        st.write("Extracting information using OpenAI...")
-        extracted_info = extract_resume_info_with_openai(pdf_text)
-        extracted_json = json.loads(extracted_info)
+    # Extract the resume text from the event
+    resume_text = event['text']
 
-        # Display the extracted information
-        st.subheader("Extracted Information")
-        try:   
-            st.text(extracted_json)
-        except ValidationError as ve:
-            st.error("Validation Error:")
-            st.text(ve)
-        except Exception as e:
-            st.error("Failed to process the response:")
-            st.text(extracted_info)
+    # Extract resume info using the OpenAI API
+    result = extract_resume_info_with_openai(resume_text)
+
+    # Return the result as a Lambda response
+    return {
+        'statusCode': 200,
+        'body': json.dumps(result)
+    }
